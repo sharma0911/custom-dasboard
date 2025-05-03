@@ -1,53 +1,48 @@
-import * as express from "express";
-import { createHmac } from "crypto";
+import crypto from 'crypto';
+import { promises as fs } from 'fs';
 
-// Replace this with your actual signing key obtained from the Periskope dashboard (to be stored in .env)
-const SHARED_SECRET = "peri_ea194594-c433-4ea7-8c94-af9e63c5df47"; 
+const WEBHOOK_SECRET = process.env.WEBHOOK_SIGNING_KEY;
+const FILE_PATH = '/tmp/tickets.json';
 
-const app = express();
+export default async function handler(req, res) {
+  const buffers = [];
+  for await (const chunk of req) buffers.push(chunk);
+  const rawBody = Buffer.concat(buffers).toString();
 
-app.use(express.json());
+  const signature = req.headers['x-signature'] || '';
+  const expectedSignature = crypto
+    .createHmac('sha256', WEBHOOK_SECRET)
+    .update(rawBody)
+    .digest('hex');
 
-// Verification function to check the signature of the request
-function verifySignature(rawBody: Record<string, any>, signature: string) {
-  // Create an HMAC SHA256 hash using the shared secret key
-  const hmac = createHmac("sha256", SHARED_SECRET);
+  if (req.method === 'POST') {
+    if (signature !== expectedSignature) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
 
+    const payload = JSON.parse(rawBody);
 
-  // Update the HMAC hash with the stringified payload
-  hmac.update(JSON.stringify(rawBody));
-  
-  // Calculate the HMAC digest in hexadecimal format
-  const digest = hmac.digest("hex");
-  
-  // Compare the calculated digest with the signature provided in the header
-  return digest === signature;
-}
+    let tickets = [];
+    try {
+      const data = await fs.readFile(FILE_PATH, 'utf-8');
+      tickets = JSON.parse(data);
+    } catch (_) {}
 
-// Webhook endpoint handler for POST requests to /webhook
-app.post("/webhook", (req: express.Request, res: express.Response) => {
-  // Extract the signature from the 'x-periskope-signature' header
-  const signature = req.headers["x-periskope-signature"] as string;
+    tickets.push(payload);
+    await fs.writeFile(FILE_PATH, JSON.stringify(tickets, null, 2));
 
-  // Verify the signature of the incoming request.
-  // It's important to use the raw request body before any parsing/modification
-  // if your framework modifies the body.
-  // Here, we assume `req.body` contains the parsed JSON object.
-  const isValid = verifySignature(req.body, signature);
-
-  // If the signature is invalid, respond with an Unauthorized status
-  if (!isValid) {
-    return res.status(401).send("Invalid signature");
+    console.log('Ticket received:', payload);
+    return res.status(200).json({ message: 'Ticket stored' });
   }
 
-  // If the signature is valid, process the webhook event
-  console.log("Received valid webhook event:", req.body);
-  // Add your custom logic here to handle the event (e.g., update database, send notifications)
+  if (req.method === 'GET') {
+    try {
+      const data = await fs.readFile(FILE_PATH, 'utf-8');
+      return res.status(200).json(JSON.parse(data));
+    } catch (e) {
+      return res.status(200).json([]);
+    }
+  }
 
-  res.status(200).send("ok");
-});
-
-const PORT = 3000;
-app.listen(PORT, () => {
-  console.log(`Webhook server listening on port ${PORT}`);
-});
+  return res.status(405).json({ error: 'Method not allowed' });
+}
