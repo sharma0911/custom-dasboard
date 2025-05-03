@@ -1,28 +1,31 @@
-require('dotenv').config();
-const express = require('express');
+import express from 'express';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
+app.use(cors()); // Optional: allows access from frontend if needed
 
-const messages = [];
+// In-memory storage for received tickets
+let tickets = [];
 
-const authMiddleware = (req, res, next) => {
-    const headers = req.headers;
-    const secretHeader = headers['x-secret'];
-    if (secretHeader !== process.env.WEBHOOK_SECRET) {
-        return res.sendStatus(401);
-    }
-    next();
-};
-app.post('/git-info', authMiddleware, (req, res) => {
-    const data = req.body;
-    messages.push(data);
-    res.sendStatus(200);
+// Webhook endpoint — ticket system POSTs here
+app.post('/ticket-webhook', (req, res) => {
+  const ticketData = req.body;
+
+  // Store the ticket
+  tickets.push(ticketData);
+
+  console.log('Ticket received:', ticketData);
+  res.status(200).send('Ticket received');
 });
 
+// Endpoint to view all received tickets as JSON
 app.get('/', (req, res) => {
-    return res.json(messages);
+  res.json(tickets);
 });
 
-const PORT = process.env.PORT || 5601;
-
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
+const PORT = 3000;
+app.listen(PORT, () => {
+  console.log(`Server listening at http://localhost:${PORT}`);
+});
